@@ -659,11 +659,11 @@ static void load_persistent_properties() {
 // So we need to apply the same rule of build/make/tools/post_process_props.py
 // on runtime.
 static void update_sys_usb_config() {
-    bool is_secure = android::base::GetBoolProperty("ro.adb.secure", true);
+    bool is_debuggable = android::base::GetBoolProperty("ro.debuggable", false);
     std::string config = android::base::GetProperty("persist.sys.usb.config", "");
     if (config.empty()) {
-        property_set("persist.sys.usb.config", !is_secure ? "adb" : "none");
-    } else if (!is_secure && config.find("adb") == std::string::npos &&
+        property_set("persist.sys.usb.config", is_debuggable ? "adb" : "none");
+    } else if (is_debuggable && config.find("adb") == std::string::npos &&
                config.length() + 4 < PROP_VALUE_MAX) {
         config.append(",adb");
         property_set("persist.sys.usb.config", config);
@@ -681,7 +681,9 @@ void property_load_boot_defaults() {
     load_properties_from_file("/odm/default.prop", NULL);
     load_properties_from_file("/vendor/default.prop", NULL);
 
-    update_sys_usb_config();
+    if (android::base::GetBoolProperty("ro.persistent_properties.ready", false)) {
+        update_sys_usb_config();
+    }
 }
 
 static void load_override_properties() {
@@ -696,6 +698,17 @@ static void load_override_properties() {
  * has mounted /data.
  */
 void load_persist_props(void) {
+    // Devices with FDE have load_persist_props called twice; the first time when the temporary
+    // /data partition is mounted and then again once /data is truly mounted.  We do not want to
+    // read persistent properties from the temporary /data partition or mark persistent properties
+    // as having been loaded during the first call, so we return in that case.
+    std::string crypto_state = android::base::GetProperty("ro.crypto.state", "");
+    std::string crypto_type = android::base::GetProperty("ro.crypto.type", "");
+    if (crypto_state == "encrypted" && crypto_type == "block") {
+        static size_t num_calls = 0;
+        if (++num_calls == 1) return;
+    }
+
     load_override_properties();
     /* Read persistent properties after all default values have been loaded. */
     load_persistent_properties();
